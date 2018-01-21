@@ -3,3 +3,5 @@
 **/*.rs.bk
 /.env
 *.sqlite
+/obs_tbl
+/obs_tbl.inp
