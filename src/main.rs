@@ -11,6 +11,7 @@ use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use egg_mode::{Token, KeyPair};
 use failure::Error;
+use tokio_core::reactor::Core;
 
 mod schema;
 use schema::events;
@@ -49,11 +50,14 @@ fn main() {
 fn run() -> Result<(), Error> {
     let conn = establish_connection()?;
     let token = auth()?;
-    let mut core = tokio_core::reactor::Core::new()?;
-    let handle = core.handle();
+    process_new_mentions(&conn, &token)?;
+    Ok(())
+}
 
+fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Error> {
+    let mut core = Core::new()?;
+    let handle = core.handle();
     let max_id = get_max_id(&conn)?;
-    println!("Max id: {:?}", max_id);
 
     let mentions = egg_mode::tweet::mentions_timeline(&token, &handle)
         .with_page_size(200);
@@ -76,7 +80,7 @@ fn run() -> Result<(), Error> {
                 replied: false,
                 deadline: NaiveDateTime::from_timestamp(1000, 1000),
             })
-            .execute(&conn)?;
+            .execute(conn)?;
     }
 
     Ok(())
