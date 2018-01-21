@@ -51,6 +51,7 @@ fn run() -> Result<(), Error> {
     let conn = establish_connection()?;
     let token = auth()?;
     process_new_mentions(&conn, &token)?;
+    send_replies(&conn, &token)?;
     Ok(())
 }
 
@@ -59,30 +60,43 @@ fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Er
     let handle = core.handle();
     let max_id = get_max_id(&conn)?;
 
-    let mentions = egg_mode::tweet::mentions_timeline(&token, &handle)
-        .with_page_size(200);
-    let (mentions, feed) = core.run(mentions.older(max_id))?;
-    for tweet in &feed {
-        let username = match tweet.user {
-            Some(ref user) => &user.screen_name[..],
-            None => "",
-        };
-        let mut text = tweet.text.trim();
-        if text.starts_with("@celestial_echo") {
-            text = &text["@celestial_echo".len()..].trim();
+    let mut mentions = egg_mode::tweet::mentions_timeline(&token, &handle);
+    loop {
+        let (new_mentions, feed) = core.run(mentions.older(max_id))?;
+        mentions = new_mentions;
+        if feed.is_empty() {
+            return Ok(());
         }
-        println!("{} @{}: {}", tweet.id, username, text);
-        // use schema::events::dsl::*;
-        diesel::insert_into(events::table)
-            .values(&EventForm {
-                tweet_id: tweet.id as i64,
-                celestial_body: text,
-                replied: false,
-                deadline: NaiveDateTime::from_timestamp(1000, 1000),
-            })
-            .execute(conn)?;
+
+        for tweet in &feed {
+            let event = build_event(&tweet)?;
+            diesel::insert_into(events::table)
+                .values(&event)
+                .execute(conn)?;
+        }
+    }
+}
+
+fn build_event(tweet: &egg_mode::tweet::Tweet) -> Result<EventForm, Error> {
+    let username = match tweet.user {
+        Some(ref user) => &user.screen_name[..],
+        None => "",
+    };
+    let mut text = tweet.text.trim();
+    if text.starts_with("@celestial_echo") {
+        text = &text["@celestial_echo".len()..].trim();
     }
 
+    println!("{} @{}: {}", tweet.id, username, text);
+    Ok(EventForm {
+        tweet_id: tweet.id as i64,
+        celestial_body: text,
+        replied: false,
+        deadline: NaiveDateTime::from_timestamp(1000, 1000),
+    })
+}
+
+fn send_replies(_conn: &SqliteConnection, _token: &Token) -> Result<(), Error> {
     Ok(())
 }
 
