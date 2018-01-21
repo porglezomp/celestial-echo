@@ -10,3 +10,15 @@ table! {
         updated_at -> Timestamp,
     }
 }
+
+table! {
+    ignored (id) {
+        id -> Integer,
+        tweet_id -> BigInt,
+    }
+}
+
+allow_tables_to_appear_in_same_query!(
+    events,
+    ignored,
+);

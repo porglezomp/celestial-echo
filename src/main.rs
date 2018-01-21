@@ -16,7 +16,7 @@ use failure::Error;
 use tokio_core::reactor::Core;
 
 mod schema;
-use schema::events;
+use schema::{events, ignored};
 
 #[derive(Debug, Insertable)]
 #[table_name = "events"]
@@ -38,6 +38,10 @@ struct Event {
     created_at: NaiveDateTime,
     round_trip: f64,
 }
+
+#[derive(Insertable)]
+#[table_name = "ignored"]
+struct Ignored { tweet_id: i64 }
 
 fn main() {
     match run() {
@@ -83,13 +87,35 @@ fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Er
                     println!("{:?}", event);
                 }
                 Ok(Response::Reply(draft)) => {
+                    if is_tweet_ignored(conn, tweet.id).unwrap_or(true) {
+                        continue;
+                    }
                     let draft = draft.auto_populate_reply_metadata(true).in_reply_to(tweet.id);
-                    core.run(draft.send(&token, &handle))?;
+                    match core.run(draft.send(&token, &handle)) {
+                        Ok(x) => match ignore_tweet(conn, tweet.id) {
+                            Ok(()) => (),
+                            Err(err) => eprintln!("Error ignoring tweet {}: {}", tweet.id, err),
+                        }
+                        Err(err) => eprintln!("Error replying to tweet: {}", err),
+                    }
                 }
                 Err(err) => eprintln!("Error processing tweet: {}", err),
             }
         }
     }
+}
+
+fn is_tweet_ignored(conn: &SqliteConnection, t_id: u64) -> Result<bool, Error> {
+    use schema::ignored::dsl::*;
+    Ok(!ignored.filter(tweet_id.eq(t_id as i64)).limit(1).load::<(i32, i64)>(conn)?.is_empty())
+}
+
+fn ignore_tweet(conn: &SqliteConnection, t_id: u64) -> Result<(), Error> {
+    use schema::ignored::dsl::*;
+    diesel::insert_into(ignored)
+        .values(&Ignored { tweet_id: t_id as i64 })
+        .execute(conn)?;
+    Ok(())
 }
 
 enum Response<'a> {
