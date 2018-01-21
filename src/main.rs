@@ -135,10 +135,16 @@ enum Response<'a> {
 }
 
 fn build_event(tweet: &Tweet) -> Result<Response, Error> {
-    let mut body = tweet.text.trim();
-    if body.starts_with("@celestial_echo") {
-        body = &body["@celestial_echo".len()..].trim();
-    }
+    let body_pattern = regex::Regex::new(r#"(@[^\s]+\s)*(.*)"#).unwrap();
+    let text = match tweet.display_text_range {
+        Some((a, b)) => &tweet.text[a..b].trim(),
+        None => tweet.text.trim(),
+    };
+    let body_match = match body_pattern.captures(text) {
+        Some(cap) => cap,
+        None => return Err(format_err!("Could not find pattern in {}", tweet.text)),
+    };
+    let body = body_match.get(2).unwrap().as_str();
 
     let out = std::process::Command::new("expect")
         .arg("horizons")
