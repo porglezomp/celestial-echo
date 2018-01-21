@@ -9,7 +9,7 @@ extern crate tokio_core;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use egg_mode::{Token, KeyPair};
+use egg_mode::{KeyPair, Token};
 use failure::Error;
 use tokio_core::reactor::Core;
 
@@ -35,7 +35,6 @@ struct Event {
     created_at: NaiveDateTime,
 }
 
-
 fn main() {
     match run() {
         Ok(()) => (),
@@ -45,7 +44,6 @@ fn main() {
         }
     }
 }
-
 
 fn run() -> Result<(), Error> {
     let conn = establish_connection()?;
@@ -68,11 +66,19 @@ fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Er
             return Ok(());
         }
 
+        // @Todo: async fetching
         for tweet in &feed {
-            let event = build_event(&tweet)?;
-            diesel::insert_into(events::table)
-                .values(&event)
-                .execute(conn)?;
+            match build_event(&tweet) {
+                Ok(event) => {
+                    if let Err(err) = diesel::insert_into(events::table)
+                        .values(&event)
+                        .execute(conn)
+                    {
+                        eprintln!("Error inserting tweet: {}", err);
+                    }
+                }
+                Err(err) => eprintln!("Error processing tweet: {}", err),
+            }
         }
     }
 }
@@ -116,7 +122,7 @@ fn auth() -> Result<Token, Error> {
         access: KeyPair {
             key: get_env("ACCESS_KEY")?.into(),
             secret: get_env("ACCESS_SECRET")?.into(),
-        }
+        },
     })
 }
 
