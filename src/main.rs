@@ -222,9 +222,9 @@ fn send_replies(conn: &SqliteConnection, token: &Token) -> Result<(), Error> {
             format!("Round trip time: {:.3}s", event.round_trip)
         } else if event.round_trip < 60.0 {
             format!("Round trip time: {:.2}s", event.round_trip)
-        } else if min < 10 {
+        } else if hr < 1 && min < 10 {
             format!("Round trip time: {}m {:.1}s", min, sec)
-        } else if min < 60 {
+        } else if hr < 1 {
             format!("Round trip time: {}m {}s", min, sec as u32)
         } else {
             format!("Round trip time: {}h {}m", hr, min)
