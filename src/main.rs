@@ -4,28 +4,31 @@ extern crate diesel;
 extern crate egg_mode;
 #[macro_use]
 extern crate failure;
+extern crate regex;
 extern crate tokio_core;
 
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use egg_mode::{KeyPair, Token};
+use egg_mode::tweet::{DraftTweet, Tweet};
 use failure::Error;
 use tokio_core::reactor::Core;
 
 mod schema;
 use schema::events;
 
-#[derive(Insertable)]
+#[derive(Debug, Insertable)]
 #[table_name = "events"]
 struct EventForm<'a> {
     tweet_id: i64,
     celestial_body: &'a str,
     replied: bool,
     deadline: NaiveDateTime,
+    round_trip: f64,
 }
 
-#[derive(Queryable)]
+#[derive(Debug, Queryable)]
 struct Event {
     id: i32,
     tweet_id: i64,
@@ -33,6 +36,7 @@ struct Event {
     replies: bool,
     deadline: NaiveDateTime,
     created_at: NaiveDateTime,
+    round_trip: f64,
 }
 
 fn main() {
@@ -69,13 +73,18 @@ fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Er
         // @Todo: async fetching
         for tweet in &feed {
             match build_event(&tweet) {
-                Ok(event) => {
+                Ok(Response::RecordForm(event)) => {
                     if let Err(err) = diesel::insert_into(events::table)
                         .values(&event)
                         .execute(conn)
                     {
                         eprintln!("Error inserting tweet: {}", err);
                     }
+                    println!("{:?}", event);
+                }
+                Ok(Response::Reply(draft)) => {
+                    let draft = draft.auto_populate_reply_metadata(true).in_reply_to(tweet.id);
+                    core.run(draft.send(&token, &handle))?;
                 }
                 Err(err) => eprintln!("Error processing tweet: {}", err),
             }
@@ -83,23 +92,63 @@ fn process_new_mentions(conn: &SqliteConnection, token: &Token) -> Result<(), Er
     }
 }
 
-fn build_event(tweet: &egg_mode::tweet::Tweet) -> Result<EventForm, Error> {
-    let username = match tweet.user {
-        Some(ref user) => &user.screen_name[..],
-        None => "",
-    };
-    let mut text = tweet.text.trim();
-    if text.starts_with("@celestial_echo") {
-        text = &text["@celestial_echo".len()..].trim();
+enum Response<'a> {
+    RecordForm(EventForm<'a>),
+    Reply(DraftTweet<'a>),
+}
+
+fn build_event(tweet: &Tweet) -> Result<Response, Error> {
+    let mut body = tweet.text.trim();
+    if body.starts_with("@celestial_echo") {
+        body = &body["@celestial_echo".len()..].trim();
     }
 
-    println!("{} @{}: {}", tweet.id, username, text);
-    Ok(EventForm {
-        tweet_id: tweet.id as i64,
-        celestial_body: text,
-        replied: false,
-        deadline: NaiveDateTime::from_timestamp(1000, 1000),
-    })
+    let out = std::process::Command::new("expect")
+        .arg("horizons")
+        .arg(&tweet.created_at.format("%Y-%m-%d %H:%M:%S").to_string())
+        .arg(body)
+        .output()?;
+
+    match out.status.code() {
+        Some(0) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let line = text.trim().lines().next().ok_or_else(|| format_err!("HORIZON response missing distance line"))?;
+            let dist = line.split_whitespace().nth(2).ok_or_else(|| format_err!("Missing distance field: '{}'", line))?;
+            let travel_secs = dist.parse::<f64>()? * 60.0 * 2.0;
+            let travel_time = chrono::Duration::milliseconds((travel_secs * 1000.0) as i64);
+            let deadline = tweet.created_at + travel_time;
+            return Ok(Response::RecordForm(EventForm {
+                tweet_id: tweet.id as i64,
+                celestial_body: body,
+                replied: false,
+                deadline: deadline.naive_utc(),
+                round_trip: travel_secs,
+            }))
+        }
+        Some(1) => {
+            return Ok(Response::Reply(DraftTweet::new(r#"Sorry, I don't recognize that location.
+
+Consult JPL HORIZONS for valid options: https://ssd.jpl.nasa.gov/?horizons
+"#)));
+        }
+        Some(2) => {
+            let pattern = regex::Regex::new(r#" *(-?\d+) *(.*?)(\(|  |$)"#).unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            let lines = text.trim().lines();
+            let mut message = String::from("Pick a number:\n");
+            for line in lines {
+                let cap = pattern.captures(line).ok_or_else(|| format_err!("No match found in '{}'", line))?;
+                let line = format!("{}: {}\n", cap.get(1).unwrap().as_str(), cap.get(2).unwrap().as_str().trim());
+                if message.len() + line.len() <= 280 {
+                    message += &line;
+                }
+            }
+            return Ok(Response::Reply(DraftTweet::new(message)));
+        }
+        code => {
+            return Err(format_err!("Unrecognized exit code: {:?}", code));
+        }
+    }
 }
 
 fn send_replies(_conn: &SqliteConnection, _token: &Token) -> Result<(), Error> {

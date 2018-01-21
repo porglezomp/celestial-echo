@@ -9,3 +9,4 @@ diesel = { version = "1.1", features = ["sqlite", "chrono"] }
 chrono = "0.4"
 failure = "0.1"
 tokio-core = "0.1"
+regex = "0.2"
