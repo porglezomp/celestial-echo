@@ -167,7 +167,7 @@
 # Establish defaults & turn debugging on or off
 #
   exp_internal 0   ; # Diagnostic output: 1= on, 0=off
-  set timeout  10  ; # Set timeout to prevent infinite hang if network down
+  set timeout  5  ; # Set timeout to prevent infinite hang if network down
   remove_nulls 0   ; # Disable null removal from Horizons output
 #
 # Turn off output mirroring (set quiet 0; set quiet 1 to observe process)
@@ -210,7 +210,7 @@
    timeout        {puts "No response from $horizons_server"; exit 1}
    "unknown host" {puts "This system cannot find $horizons_server"; exit 1}
    "Horizons> "   {send PAGE\r} }
-  set timeout 15
+  set timeout 5
   expect {
    "Horizons> "   { send -- "$TARGET\r"}
   }
@@ -254,20 +254,23 @@
 # Request observer table ephemeris type
 #
   expect {
-   -re ".*Observe, Elements.*: $" {
-        send O\r }
-     }
+      timeout { exit 1 }
+      -re ".*Observe, Elements.*: $" {
+          send O\r }
+  }
 #
 # Provide coordinate/observing center
 #
   expect {
-    -re ".*Coordinate center.*: $" {
-        send \r }
-     }
+      timeout { exit 1 }
+      -re ".*Coordinate center.*: $" {
+          send \r }
+  }
 #
 # Specify START date
 #
   expect {
+      timeout { exit 1 }
       -re ".*disallowed.*" { puts " $START_TIME      0.0"; exit 0 }
       -re ".*Starting UT.*: $" {
           send $START_TIME\r }
@@ -276,34 +279,39 @@
 # specify STOP date
 #
   expect {
-    -re ".*Ending.*: $" {
-       send \r }
-     }
+      timeout { exit 1 }
+      -re ".*Ending.*: $" {
+          send \r }
+  }
 #
 # specify step size
 #
   expect {
-    -re ".*Output interval.*: $" {
-       send $STEP_SIZE\r }
-   }
+      timeout { exit 1 }
+      -re ".*Output interval.*: $" {
+          send $STEP_SIZE\r }
+  }
 #
 # specify output QUANTITIES
 #
   expect {
-   -re ".*Accept default.*: $" {
-       send Y\r }
-    }
+      timeout { exit 1 }
+      -re ".*Accept default.*: $" {
+          send Y\r }
+  }
 #
 # Set output quantities
 #
   expect {
-   -re ".*Select table quantities.*: $" {
-       send $QUANTITIES\r }
-   }
+      timeout { exit 1 }
+      -re ".*Select table quantities.*: $" {
+          send $QUANTITIES\r }
+  }
 #
 # Read the output table entry
 #
   expect {
+      timeout { exit 1 }
       -re ".*SOE(.*)EOE.*" {
           puts $expect_out(1,string) }
       send "X\r"
